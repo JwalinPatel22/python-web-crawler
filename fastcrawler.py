@@ -1,14 +1,13 @@
 # import asyncio
 # import re
 # import requests
-# from typing import List
+# from typing import List, Set
 # from xml.etree import ElementTree
-# from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-# from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
 # def get_sitemap_urls() -> List[str]:
 #     """
-#     Fetches URLs from the sitemap (in this case, Hebbar's Kitchen recipe sitemap).
+#     Fetches cuisine URLs from the Hebbar's Kitchen cuisines sitemap.
+#     Example output URL: https://hebbarskitchen.com/cuisines/gujarat/
 #     """
 #     sitemap_url = "https://hebbarskitchen.com/cuisines-sitemap.xml"
 #     try:
@@ -22,271 +21,203 @@
 #         print(f"Error fetching sitemap: {e}")
 #         return []
 
-# def apply_filters(markdown_content: str) -> str:
+# def expand_pagination(cuisine_url: str) -> List[str]:
 #     """
-#     Applies filtering to the markdown content:
-#       - Extracts only sections starting with ## or ###.
-#       - Skips sections containing any unwanted headings.
-#       - Removes markdown links.
-#       - Removes empty headings that start with ### or ####.
+#     Given a cuisine URL (e.g. https://hebbarskitchen.com/cuisines/gujarat/),
+#     returns a list of paginated URLs (page/1 is the main page).
+#     Stops when a page returns a non-200 status code.
 #     """
-#     ignore_headings = [
-#         "#### SUBSCRIBE TO OUR RECIPES",
-#         "#### POPULAR RECIPES",
-#         "#### POPULAR CATEGORIES",
-#         "#### Stay in Touch",
-#         "#### Popular",
-#         "#### Search Recipes",
-#         "##  Rate This Recipe",
-#         "##  Recipe Ratings without Comment",
-#         "#### BROWSE BY CATEGORIES",
-#         "#### STAY CONNECTED",
-#         "#### Related Recipes",
-#         "#### OUR OTHER LANGUAGES",
-#         "#### Must Read:",
-#         "#### What's New"
-#     ]
-    
-#     # Extract sections that start with ## or ### until the next section or end of text
-#     sections = re.findall(r"(##+ .+?)(?=\n##|\n\Z)", markdown_content, re.DOTALL)
-    
-#     cleaned_sections = []
-#     for section in sections:
-#         # Skip the section if it contains any of the ignored headings
-#         if any(ignored in section for ignored in ignore_headings):
-#             continue
-        
-#         # Remove empty headings that start with ### or ####.
-#         # This regex removes lines that start with 3 or 4 '#' and have no text (only whitespace) after them.
-#         section = re.sub(r"^(#{3,4}\s*)\s*$\n", "", section, flags=re.MULTILINE)
-        
-#         # Remove Markdown links of the form [text](url)
-#         section = re.sub(r"\[.*?\]\(.*?\)", "", section)
-        
-#         cleaned_sections.append(section.strip())
-    
-#     final_markdown = "\n\n".join(cleaned_sections)
-#     return final_markdown
-
-# async def crawl_and_filter(urls: List[str]):
-#     """
-#     Crawls each URL from the sitemap, applies the markdown filters,
-#     and saves each filtered result into a separate markdown file.
-#     """
-#     print(f"Found {len(urls)} URLs to crawl")
-    
-#     # Configure browser and crawler settings
-#     browser_config = BrowserConfig(
-#         headless=True,
-#         extra_args=["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
-#     )
-    
-#     crawl_config = CrawlerRunConfig(
-#         markdown_generator=DefaultMarkdownGenerator()
-#     )
-    
-#     # Create and start the crawler
-#     crawler = AsyncWebCrawler(config=browser_config)
-#     await crawler.start()
-    
-#     session_id = "session1"  # reuse the same session across all URLs
-#     try:
-#         for idx, url in enumerate(urls):
-#             print(f"Crawling URL {idx+1}/{len(urls)}: {url}")
-#             result = await crawler.arun(
-#                 url=url,
-#                 config=crawl_config,
-#                 session_id=session_id
-#             )
-#             if result.success:
-#                 print(f"Successfully crawled: {url}")
-#                 # Get the raw markdown content
-#                 markdown_content = result.markdown
-#                 # Apply our filters to the markdown
-#                 filtered_markdown = apply_filters(markdown_content)
-#                 # Save the filtered markdown to a file (naming each file uniquely)
-#                 filename = f"final_filtered_recipe_{idx+1}.md"
-#                 with open(filename, "w", encoding="utf-8") as f:
-#                     f.write(filtered_markdown)
-#                 print(f"Saved filtered content to {filename}")
+#     pages = []
+#     page = 1
+#     while True:
+#         if page == 1:
+#             url = cuisine_url.rstrip('/')
+#         else:
+#             url = cuisine_url.rstrip('/') + f"/page/{page}/"
+#         try:
+#             response = requests.get(url)
+#             if response.status_code == 200:
+#                 pages.append(url)
+#                 page += 1
 #             else:
-#                 print(f"Failed: {url} - Error: {result.error_message}")
-#     finally:
-#         await crawler.close()
+#                 break
+#         except Exception as e:
+#             print(f"Error accessing {url}: {e}")
+#             break
+#     return pages
+
+# def extract_recipe_urls_from_html(html: str) -> List[str]:
+#     """
+#     Extracts recipe URLs from HTML content.
+#     We assume that recipe URLs start with "https://hebbarskitchen.com/"
+#     and exclude any URLs that contain "/cuisines/".
+#     """
+#     # This regex finds href values that begin with https://hebbarskitchen.com/
+#     links = re.findall(r'href="(https://hebbarskitchen\.com/[^"]+)"', html)
+#     recipe_links = []
+#     for link in links:
+#         if "/cuisines/" not in link:
+#             recipe_links.append(link)
+#     return list(set(recipe_links))
+
+# async def fetch_page(url: str) -> (int, str):
+#     """
+#     Asynchronously fetches a URL using requests in a thread.
+#     Returns a tuple: (status_code, text).
+#     """
+#     loop = asyncio.get_event_loop()
+#     def get_url():
+#         resp = requests.get(url)
+#         return resp.status_code, resp.text
+#     return await loop.run_in_executor(None, get_url)
 
 # async def main():
-#     urls = get_sitemap_urls()
-#     if urls:
-#         await crawl_and_filter(urls)
-#     else:
-#         print("No URLs found to crawl")
+#     # Get all cuisine URLs from the sitemap.
+#     cuisine_urls = get_sitemap_urls()
+#     if not cuisine_urls:
+#         print("No cuisine URLs found.")
+#         return
+
+#     all_recipe_urls: Set[str] = set()
+#     print(f"Found {len(cuisine_urls)} cuisine URLs in the sitemap.")
+
+#     # For each cuisine URL, expand its pagination and extract recipe URLs.
+#     for cuisine_url in cuisine_urls:
+#         print(f"\nProcessing cuisine: {cuisine_url}")
+#         paginated_urls = expand_pagination(cuisine_url)
+#         print(f"  Found {len(paginated_urls)} paginated pages.")
+#         for page_url in paginated_urls:
+#             print(f"    Fetching page: {page_url}")
+#             status, html = await fetch_page(page_url)
+#             if status == 200:
+#                 recipe_links = extract_recipe_urls_from_html(html)
+#                 print(f"      Extracted {len(recipe_links)} recipe URLs.")
+#                 all_recipe_urls.update(recipe_links)
+#             else:
+#                 print(f"      Failed to fetch page: {page_url} (status: {status})")
+
+#     # Save all unique recipe URLs to a markdown file.
+#     output_file = "all_recipe_urls.md"
+#     with open(output_file, "w", encoding="utf-8") as f:
+#         f.write("# Recipe URLs\n\n")
+#         for url in sorted(all_recipe_urls):
+#             f.write(f"- {url}\n")
+#     print(f"\nSaved {len(all_recipe_urls)} unique recipe URLs to '{output_file}'.")
 
 # if __name__ == "__main__":
 #     asyncio.run(main())
 
 
-
-
-
-# import requests
-# from xml.etree import ElementTree
-
-# def get_sitemap_urls():
-#     """
-#     Fetches URLs from the sitemap (Hebbar's Kitchen recipe sitemap) and saves them to a text file.
-#     """
-#     sitemap_url = "https://hebbarskitchen.com/cuisines-sitemap.xml"
-#     try:
-#         response = requests.get(sitemap_url)
-#         response.raise_for_status()
-#         root = ElementTree.fromstring(response.content)
-#         namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-#         urls = [loc.text for loc in root.findall('.//ns:loc', namespace)]
-
-#         # Append URLs to a text file
-#         with open("recipe_urls.txt", "a", encoding="utf-8") as file:
-#             for url in urls:
-#                 file.write(url + "\n")
-
-#         print(f"Successfully saved {len(urls)} URLs to recipe_urls.txt")
-
-#     except Exception as e:
-#         print(f"Error fetching sitemap: {e}")
-
-# if __name__ == "__main__":
-#     get_sitemap_urls()
-
-
-
-
-
 import asyncio
 import re
 import requests
-from typing import List
+from typing import List, Set
 from xml.etree import ElementTree
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
-def get_sitemap_urls() -> List[str]:
-    """
-    Fetches URLs from the sitemap (in this case, Hebbar's Kitchen cuisine sitemap).
-    """
-    sitemap_url = "https://hebbarskitchen.com/cuisines-sitemap.xml"
-    try:
-        response = requests.get(sitemap_url)
-        response.raise_for_status()
-        root = ElementTree.fromstring(response.content)
-        namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-        urls = [loc.text for loc in root.findall('.//ns:loc', namespace)]
-        return urls
-    except Exception as e:
-        print(f"Error fetching sitemap: {e}")
-        return []
+# Hardcoded list of cuisine URLs
+CUISINE_URLS = [
+    "https://hebbarskitchen.com/cuisines/andhra/",
+    "https://hebbarskitchen.com/cuisines/awadh/",
+    "https://hebbarskitchen.com/cuisines/bangalore/",
+    "https://hebbarskitchen.com/cuisines/bengali/",
+    "https://hebbarskitchen.com/cuisines/goan/",
+    "https://hebbarskitchen.com/cuisines/gujarat/",
+    "https://hebbarskitchen.com/cuisines/hyderabad/",
+    "https://hebbarskitchen.com/cuisines/karnataka/",
+    "https://hebbarskitchen.com/cuisines/kashmir/",
+    "https://hebbarskitchen.com/cuisines/kerala/",
+    "https://hebbarskitchen.com/cuisines/konkan/",
+    "https://hebbarskitchen.com/cuisines/maharashtra/",
+    "https://hebbarskitchen.com/cuisines/mangalore/",
+    "https://hebbarskitchen.com/cuisines/mysore/",
+    "https://hebbarskitchen.com/cuisines/north-indian/",
+    "https://hebbarskitchen.com/cuisines/north-karnataka/",
+    "https://hebbarskitchen.com/cuisines/punjabi/",
+    "https://hebbarskitchen.com/cuisines/rajasthani/",
+    "https://hebbarskitchen.com/cuisines/south-indian/",
+    "https://hebbarskitchen.com/cuisines/tamil-cuisine/",
+    "https://hebbarskitchen.com/cuisines/udupi/"
+]
 
-def extract_cuisine_name(url: str) -> str:
+def expand_pagination(cuisine_url: str) -> List[str]:
     """
-    Extracts the cuisine name from the URL.
-    Example: 'https://hebbarskitchen.com/cuisines/gujarat/' -> 'gujarat'
+    Given a cuisine URL (e.g. https://hebbarskitchen.com/cuisines/gujarat/),
+    returns a list of paginated URLs (page/1 is the main page).
+    Stops when a page returns a non-200 status code.
     """
-    return url.rstrip('/').split("/")[-1]
-
-def apply_filters(markdown_content: str) -> str:
-    """
-    Applies filtering to the markdown content:
-      - Extracts only sections starting with ## or ###.
-      - Skips sections containing any unwanted headings.
-      - Removes markdown links.
-      - Removes empty headings that start with ### or ####.
-    """
-    ignore_headings = [
-        "#### SUBSCRIBE TO OUR RECIPES",
-        "#### POPULAR RECIPES",
-        "#### POPULAR CATEGORIES",
-        "#### Stay in Touch",
-        "#### Popular",
-        "#### Search Recipes",
-        "##  Rate This Recipe",
-        "##  Recipe Ratings without Comment",
-        "#### BROWSE BY CATEGORIES",
-        "#### STAY CONNECTED",
-        "#### Related Recipes",
-        "#### OUR OTHER LANGUAGES",
-        "#### Must Read:",
-        "#### What's New"
-    ]
-    
-    sections = re.findall(r"(##+ .+?)(?=\n##|\n\Z)", markdown_content, re.DOTALL)
-    
-    cleaned_sections = []
-    for section in sections:
-        if any(ignored in section for ignored in ignore_headings):
-            continue
-        
-        section = re.sub(r"^(#{3,4}\s*)\s*$\n", "", section, flags=re.MULTILINE)
-        section = re.sub(r"\[.*?\]\(.*?\)", "", section)
-        
-        cleaned_sections.append(section.strip())
-    
-    final_markdown = "\n\n".join(cleaned_sections)
-    return final_markdown
-
-async def crawl_and_filter(urls: List[str]):
-    """
-    Crawls each URL from the sitemap, applies the markdown filters,
-    and appends all filtered content into a single markdown file.
-    """
-    print(f"Found {len(urls)} URLs to crawl")
-    
-    browser_config = BrowserConfig(
-        headless=True,
-        extra_args=["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
-    )
-    
-    crawl_config = CrawlerRunConfig(
-        markdown_generator=DefaultMarkdownGenerator()
-    )
-    
-    crawler = AsyncWebCrawler(config=browser_config)
-    await crawler.start()
-    
-    session_id = "session1"  # reuse the same session across all URLs
-    all_content = []  # list to accumulate content from each crawl
-    
-    try:
-        for idx, url in enumerate(urls):
-            cuisine_name = extract_cuisine_name(url)
-            print(f"Crawling {idx+1}/{len(urls)}: {url} (Cuisine: {cuisine_name})")
-            
-            result = await crawler.arun(
-                url=url,
-                config=crawl_config,
-                session_id=session_id
-            )
-            if result.success:
-                print(f"Successfully crawled: {url}")
-                markdown_content = result.markdown
-                filtered_markdown = apply_filters(markdown_content)
-                # Optionally, prepend a heading with the cuisine name for separation
-                content_with_heading = f"# {cuisine_name.capitalize()}\n\n{filtered_markdown}"
-                all_content.append(content_with_heading)
+    pages = []
+    page = 1
+    while True:
+        if page == 1:
+            url = cuisine_url.rstrip('/')
+        else:
+            url = cuisine_url.rstrip('/') + f"/page/{page}/"
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                pages.append(url)
+                page += 1
             else:
-                print(f"Failed: {url} - Error: {result.error_message}")
-    finally:
-        await crawler.close()
-    
-    # Append all content to a single markdown file
-    final_content = "\n\n---\n\n".join(all_content)
-    with open("all_cuisines.md", "w", encoding="utf-8") as f:
-        f.write(final_content)
-    print("Saved all filtered content to all_cuisines.md")
+                break
+        except Exception as e:
+            print(f"Error accessing {url}: {e}")
+            break
+    return pages
+
+def extract_recipe_urls_from_html(html: str) -> List[str]:
+    """
+    Extracts recipe URLs from HTML content.
+    Assumes that recipe URLs start with "https://hebbarskitchen.com/"
+    and excludes any URLs that contain "/cuisines/".
+    Also ignores URLs that end with "-hi/" or "-kn/".
+    """
+    links = re.findall(r'href="(https://hebbarskitchen\.com/[^"]+)"', html)
+    recipe_links = []
+    for link in links:
+        if "/cuisines/" in link:
+            continue
+        if link.endswith("-hi/") or link.endswith("-kn/"):
+            continue
+        recipe_links.append(link)
+    return list(set(recipe_links))
+
+async def fetch_page(url: str) -> (int, str):
+    """
+    Asynchronously fetches a URL using requests in a thread.
+    Returns a tuple: (status_code, text).
+    """
+    loop = asyncio.get_event_loop()
+    def get_url():
+        resp = requests.get(url)
+        return resp.status_code, resp.text
+    return await loop.run_in_executor(None, get_url)
 
 async def main():
-    urls = get_sitemap_urls()
-    if urls:
-        await crawl_and_filter(urls)
-    else:
-        print("No URLs found to crawl")
+    all_recipe_urls: Set[str] = set()
+    print(f"Processing {len(CUISINE_URLS)} cuisine URLs.")
+
+    # Process each cuisine URL
+    for cuisine_url in CUISINE_URLS:
+        print(f"\nProcessing cuisine: {cuisine_url}")
+        paginated_urls = expand_pagination(cuisine_url)
+        print(f"  Found {len(paginated_urls)} paginated pages for {cuisine_url}.")
+        for page_url in paginated_urls:
+            print(f"    Fetching page: {page_url}")
+            status, html = await fetch_page(page_url)
+            if status == 200:
+                recipe_links = extract_recipe_urls_from_html(html)
+                print(f"      Extracted {len(recipe_links)} recipe URLs.")
+                all_recipe_urls.update(recipe_links)
+            else:
+                print(f"      Failed to fetch page: {page_url} (status: {status})")
+    
+    # Save all unique recipe URLs to a markdown file.
+    output_file = "all_recipe_urls.md"
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("# Recipe URLs\n\n")
+        for url in sorted(all_recipe_urls):
+            f.write(f"- {url}\n")
+    print(f"\nSaved {len(all_recipe_urls)} unique recipe URLs to '{output_file}'.")
 
 if __name__ == "__main__":
     asyncio.run(main())

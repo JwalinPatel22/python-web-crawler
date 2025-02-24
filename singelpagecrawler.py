@@ -224,7 +224,7 @@ async def crawl_recipes(recipe_urls: list):
     print("Saved all filtered recipes to all_recipes.md")
 
 async def main():
-    markdown_file = "recipes.md"  # Your input markdown file with URLs
+    markdown_file = "cleaned_recipe_urls.md"  # Your input markdown file with URLs
     recipe_links = extract_recipe_links(markdown_file)
     print(f"Found {len(recipe_links)} recipes.")
     
